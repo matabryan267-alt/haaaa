@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Debate IA - Forzar Micrófono</title>
+    <style>
+        body { background: #0f0f0f; color: #fff; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .box { background: #1a1a1a; padding: 20px; border-radius: 15px; width: 100%; max-width: 450px; border-bottom: 4px solid #007bff; text-align: center; }
+        #btn-micro { 
+            background: #007bff; color: white; border: none; padding: 15px 30px; 
+            font-size: 16px; border-radius: 50px; cursor: pointer; font-weight: bold; margin: 15px 0;
+        }
+        #btn-micro:disabled { opacity: 0.5; cursor: not-allowed; }
+        .active { background: #ff4444 !important; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0.7); } 70% { box-shadow: 0 0 0 15px rgba(255, 68, 68, 0); } 100% { box-shadow: 0 0 0 0 rgba(255, 68, 68, 0); } }
+        #logs { width: 100%; max-width: 450px; height: 250px; background: #000; margin-top: 20px; padding: 10px; border-radius: 10px; overflow-y: auto; font-family: monospace; font-size: 13px; border: 1px solid #333; }
+        .status-msg { color: #00ff88; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="box">
+        <h2>Control de Debate IA</h2>
+        <p>Estado: <span id="st-txt" class="status-msg">DESCONECTADO</span></p>
+        <button id="btn-micro" onclick="iniciarSistema()">1. ACTIVAR MICRÓFONO</button>
+        <p style="font-size: 12px; color: #888;">Si no funciona, revisa el candado de la barra de direcciones.</p>
+    </div>
+
+    <div id="logs"><div>> Haz clic en el botón para pedir permisos...</div></div>
+
+    <script>
+        // ⚠️ ADVERTENCIA: La API Key está expuesta en el cliente. No usar en producción.
+        const API_KEY = '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';
+
+        let recog;
+        let modoDebate = false;
+        let textoFinal = '';
+        let isSystemOn = false;  // ← Variable declarada correctamente
+
+        function addLog(m, color = "#fff") {
+            const l = document.getElementById('logs');
+            // Usamos insertAdjacentHTML para mejor rendimiento y evitar reparseo completo
+            l.insertAdjacentHTML('afterbegin', `<div style="color:${color}">> ${m}</div>`);
+        }
+
+        async function iniciarSistema() {
+            // Evitar doble inicio (deshabilitar botón)
+            const btn = document.getElementById('btn-micro');
+            btn.disabled = true;
+
+            // Si ya hay una instancia activa, la detenemos
+            if (recog) {
+                recog.stop();
+                isSystemOn = false;
+            }
+
+            try {
+                // 1. Forzar permiso de micrófono con getUserMedia
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                addLog("Permiso de micrófono concedido.", "#00ff88");
+
+                // Liberamos ese stream (el reconocimiento usará su propio acceso al mic)
+                stream.getTracks().forEach(track => track.stop());
+
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                if (!SpeechRecognition) {
+                    alert("Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.");
+                    btn.disabled = false;
+                    return;
+                }
+
+                recog = new SpeechRecognition();
+                recog.lang = 'es-ES';
+                recog.continuous = true;
+                recog.interimResults = true;
+
+                recog.onstart = () => {
+                    document.getElementById('st-txt').innerText = "ESCUCHANDO...";
+                    btn.classList.add('active');
+                    btn.innerText = "SISTEMA EN VIVO";
+                    addLog("Micrófono abierto. Di 'Vamos a ver' para iniciar debate.", "#ffff00");
+                };
+
+                recog.onresult = (e) => {
+                    // Tomamos el último resultado
+                    const lastResult = e.results[e.results.length - 1];
+                    const transcript = lastResult[0].transcript.toLowerCase().trim();
+
+                    if (lastResult.isFinal) {
+                        if (!modoDebate) {
+                            if (transcript.includes("vamos a ver")) {
+                                modoDebate = true;
+                                textoFinal = '';
+                                addLog("🔴 MODO DEBATE ACTIVADO", "#ff4444");
+                                document.getElementById('st-txt').innerText = "GRABANDO DEBATE...";
+                            }
+                        } else {
+                            if (transcript.includes("bueno")) {
+                                modoDebate = false;
+                                document.getElementById('st-txt').innerText = "PROCESANDO IA...";
+                                addLog("⏹ Debate finalizado. Enviando a IA...", "#ff4444");
+                                enviarIA(textoFinal);
+                            } else {
+                                textoFinal += transcript + ". ";
+                                addLog("Voz: " + transcript, "#aaa");
+                            }
+                        }
+                    }
+                };
+
+                recog.onerror = (err) => {
+                    addLog("Error de reconocimiento: " + err.error, "#ff4444");
+                    if (err.error === 'not-allowed') {
+                        alert("Permiso de micrófono bloqueado. Habilítalo desde el candado de la barra de direcciones.");
+                    }
+                    // Si hay un error grave, reactivamos el botón
+                    btn.disabled = false;
+                    isSystemOn = false;
+                };
+
+                recog.onend = () => {
+                    // Solo reiniciamos si el sistema debe seguir activo
+                    if (isSystemOn) {
+                        addLog("Reconocimiento detenido inesperadamente. Reiniciando...", "#ffaa00");
+                        try {
+                            recog.start();
+                        } catch (e) {
+                            addLog("No se pudo reiniciar el reconocimiento: " + e.message, "#ff4444");
+                            btn.disabled = false;
+                            isSystemOn = false;
+                        }
+                    }
+                };
+
+                // Activamos la bandera antes de iniciar
+                isSystemOn = true;
+                recog.start();
+
+            } catch (err) {
+                addLog("Error al pedir el micrófono: " + err.message, "#ff4444");
+                alert("No se pudo activar el micrófono. Asegúrate de dar permisos y que ningún otro programa lo esté usando.");
+                btn.disabled = false;
+            }
+        }
+
+        async function enviarIA(texto) {
+            addLog("Enviando a Groq...", "#007bff");
+            try {
+                const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "llama3-8b-8192",
+                        messages: [
+                            { role: "system", content: "Responde de forma breve y natural en español, como en un debate." },
+                            { role: "user", content: texto }
+                        ]
+                    })
+                });
+
+                // Comprobamos que la respuesta sea exitosa
+                if (!r.ok) {
+                    const errData = await r.json().catch(() => ({}));
+                    throw new Error(errData.error?.message || `Error HTTP ${r.status}`);
+                }
+
+                const data = await r.json();
+                if (!data.choices || data.choices.length === 0) {
+                    throw new Error("La API no devolvió ninguna respuesta.");
+                }
+
+                const respuestaIA = data.choices[0].message.content;
+                addLog("IA: " + respuestaIA, "#007bff");
+                hablar(respuestaIA);
+            } catch (e) {
+                addLog("Error con la IA: " + e.message, "#ff4444");
+            }
+        }
+
+        function hablar(mensaje) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(mensaje);
+            utterance.lang = 'es-ES';
+            utterance.rate = 0.8;
+            utterance.onend = () => {
+                document.getElementById('st-txt').innerText = "ESCUCHANDO...";
+            };
+            utterance.onerror = () => {
+                addLog("Error en la síntesis de voz.", "#ff4444");
+            };
+            window.speechSynthesis.speak(utterance);
+        }
+    </script>
+</body>
+</html>
